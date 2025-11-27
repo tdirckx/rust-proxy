@@ -31,7 +31,6 @@ impl Authentication {
             0xFF => Self::NoAcceptableMethods,
             0x0A..=0x7F => Self::Unassigned,
             0x80..=0xFE => Self::PrivateMethods,
-            _ => Self::Unassigned,
         }
     }
 

@@ -1,15 +1,14 @@
-use tokio::net::{TcpStream};
-
 use std::error::Error;
 use crate::proxy::socks5::statics::Authentication;
-use crate::proxy::{Client, Config};
+use crate::proxy::{Connection, Config};
 
 
 /**
  * Represents a SOCKS5 proxy handler.
  */
 pub struct Socks5 {
-    client: Client
+    connection: Connection,
+    first_buffer: Vec<u8>,
 }
 
 
@@ -21,46 +20,43 @@ impl Socks5 {
     /**
      *  Create a new Socks5 instance.
      */
-    pub fn new(mut client: Client) -> Self {
-        Socks5 { client }
+    pub fn new(connection: Connection, first_buffer: Vec<u8>) -> Self {
+        println!("Received SOCKS5 handshake");
+
+        Socks5 { 
+            connection,
+            first_buffer
+        }
     }
 
     /**
      * Run the SOCKS5 protocol handling.
      */
-    pub async fn run(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.send_authentication_method().await?;
+    pub async fn run(mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let authentication_method = self.validate_authentication().await?;
+        println!("Selected authentication method: {:?}", authentication_method);
+
 
         Ok(())
     }
 
 
     /**
-     * Send the authentication method to the client.
+     * Send the authentication method to the connection.
      */
-    async fn send_authentication_method(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let buffer = self.client.get_buffer();
+    async fn validate_authentication(&mut self) -> Result<Authentication, Box<dyn Error + Send + Sync>> {
 
-        let mut hasAuthentication: bool = false;
-        for(i, &method) in buffer[2..self.client.get_bytes_read()].iter().enumerate() {
+        let no_acceptable_methods: u8 = Authentication::NoAcceptableMethods.as_u8();
+        let allowed_methods = Config::get_allowed_authentication_method();
 
-            println!("--- auth check ---");
-            print!("Method {}: {}\n", i, method);
-            print!("Expected Method: {}\n", Config::get_expected_authentication_method());
-
-            hasAuthentication = method == Config::get_expected_authentication_method();
+        for &method in &self.first_buffer[2..] {
+            if allowed_methods.contains(&method) {
+                return Ok(Authentication::from_u8(method));
+            }
         }
 
-        println!("hasAuthentication: {}", hasAuthentication);
-
-        if !hasAuthentication {
-            self.client.write_chosen_authentication(0xFF).await?;
-            return Err("No acceptable authentication method found".into());
-        }
-
-        self.client.write_chosen_authentication(Config::get_expected_authentication_method()).await?;
-
-        Ok(())
+        self.connection.write(vec![no_acceptable_methods]).await?;
+        return Err("No acceptable authentication method found".into());
     }
 
 

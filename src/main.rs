@@ -3,11 +3,6 @@ mod proxy;
 
 use proxy::Server;
 
-// struct Config {
-//     listen_addr: String,
-//     host_addr: String,
-// }
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
