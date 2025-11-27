@@ -1,7 +1,6 @@
 use tokio::net::{TcpListener, TcpStream};
 use std::error::Error;
 use std::net::SocketAddr;
-// use log::{error, debug, info};
 use env_logger;
 
 use crate::proxy::Connection;
@@ -15,12 +14,12 @@ pub struct Server {
 }
 
 /**
- *  Implementation of Server methods.
+ * Implementation of Server methods.
  */
 impl Server {
 
     /**
-     *  Create a new Server instance.
+     * Create a new Server instance.
      */
     pub async fn new() -> Result<Self, Box<dyn Error + Send + Sync>> {
         env_logger::init();
@@ -37,7 +36,7 @@ impl Server {
 
 
     /**
-     *  Run the server to accept incoming connections.
+     * Run the server to accept incoming connections.
      */
     pub async fn run(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         loop {
@@ -52,17 +51,24 @@ impl Server {
         }
     }
 
+    /**
+     * Check if the version is SOCKS5
+     */
     pub fn is_socks5(version: u8) -> bool {
         version == General::Socks5.as_u8()
     }
 
+
+    /**
+     *  Check if the version is SOCKS4
+     */
     pub fn is_socks4(version: u8) -> bool {
         version == General::Socks4.as_u8()
     }
 
 
     /**
-     *  Handle an individual connection connection.
+     * Handle an incoming connection.
      */
     pub async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error + Send + Sync>> {
 

@@ -4,7 +4,7 @@ use crate::proxy::{Connection, Config};
 
 
 /**
- * Represents a SOCKS5 proxy handler.
+ * Socks5 struct representing a SOCKS5 connection.
  */
 pub struct Socks5 {
     connection: Connection,
@@ -13,12 +13,12 @@ pub struct Socks5 {
 
 
 /**
- * Implementation of Socks5 methods.    
+ * Implementation of Socks5 methods.
  */
 impl Socks5 {
 
     /**
-     *  Create a new Socks5 instance.
+     * Create a new Socks5 instance.
      */
     pub fn new(connection: Connection, first_buffer: Vec<u8>) -> Self {
         println!("Received SOCKS5 handshake");
@@ -30,7 +30,7 @@ impl Socks5 {
     }
 
     /**
-     * Run the SOCKS5 protocol handling.
+     * Run the SOCKS5 authentication process.
      */
     pub async fn run(mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let authentication_method = self.validate_authentication().await?;
@@ -42,7 +42,7 @@ impl Socks5 {
 
 
     /**
-     * Send the authentication method to the connection.
+     * Validate the client's authentication methods.
      */
     async fn validate_authentication(&mut self) -> Result<Authentication, Box<dyn Error + Send + Sync>> {
 
