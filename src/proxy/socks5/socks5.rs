@@ -145,10 +145,10 @@ impl Socks5 {
         let (client_read, client_write) = self.connection.stream.split();
         let (upstream_read, upstream_write) = upstream.stream.split();
 
-        let _ = tokio::try_join!(
+        tokio::try_join!(
             Self::forward(client_read, upstream_write), 
             Self::forward(upstream_read, client_write)
-        );
+        )?;
 
         Ok(())
     }
@@ -203,8 +203,10 @@ impl Socks5 {
                 return Err("Unexpected disconnected!".into());
             }
 
-            Self::inspect(&buffer).await?;
-            outgoing.write_all(&buffer[..n]).await?;
+            let data = &buffer[..n];
+
+            Self::inspect(data).await?;
+            outgoing.write_all(data).await?;
         }
 
     }
@@ -213,7 +215,7 @@ impl Socks5 {
     /**
      * 
      */
-    async fn inspect(_buffer: &Vec<u8>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn inspect(_buffer: &[u8]) -> Result<(), Box<dyn Error + Send + Sync>> {
         println!("Hook for adding modules ...");
 
         Ok(())
