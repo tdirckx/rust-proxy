@@ -200,7 +200,7 @@ impl Socks5 {
             let mut buffer = vec![0u8; 8192];
             let n = incoming.read(&mut buffer).await?;
             if n == 0 {
-                return Err("Unexpected disconnected!".into());
+                break;
             }
 
             let data = &buffer[..n];
@@ -209,6 +209,7 @@ impl Socks5 {
             outgoing.write_all(data).await?;
         }
 
+        Ok(())
     }
 
 
