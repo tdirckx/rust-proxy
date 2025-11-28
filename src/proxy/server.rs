@@ -2,7 +2,8 @@ use tokio::net::{TcpListener, TcpStream};
 use std::error::Error;
 use std::net::SocketAddr;
 use crate::proxy::Connection;
-use crate::proxy::socks5::{Socks5, General};
+use crate::proxy::socks5::Socks5;
+use crate::proxy::socks5::statics::General;
 
 /**
  * Represents the proxy server.
@@ -56,13 +57,11 @@ impl Server {
         let mut connection = Connection::new(stream);
         let buffer = connection.read(258).await?;
 
-        const SOCKS5 : u8 = General::Socks5 as u8;
-        const SOCKS4 : u8 = General::Socks4 as u8;
-
-        match buffer[0] {
-            SOCKS5 => Socks5::new(connection, buffer).run().await,
-            SOCKS4 => Err("SOCKS4 not supported yet".into()),
-            _ => Err("Unknown protocol".into())
+        match General::from_u8(buffer[0]) {
+            General::Socks5 => Socks5::new(connection, buffer).run().await,
+            General::Socks4 => Err("SOCKS4 not supported yet".into()),
+            General::HttpConnect => Err("HTTP CONNECT not supported yet".into()),
+            _ => Err(format!("Unknown protocol : {:?}", buffer[0]).into())
         }        
     }
 }

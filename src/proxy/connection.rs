@@ -6,7 +6,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
  * Represents a client connection.
  */
 pub struct Connection {
-    stream: TcpStream,
+    pub stream: TcpStream,
 }
 
 
@@ -21,6 +21,7 @@ impl Connection {
     pub fn new(stream: TcpStream) -> Self {
         Connection { stream }
     }
+    
 
 
     /**
