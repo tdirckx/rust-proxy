@@ -1,4 +1,5 @@
 use std::error::Error;
+use crate::proxy::socks5::General;
 use crate::proxy::socks5::statics::Authentication;
 use crate::proxy::{Connection, Config};
 
@@ -10,6 +11,14 @@ pub struct Socks5 {
     connection: Connection,
     first_buffer: Vec<u8>,
 }
+
+
+/**
+ * TODO: 
+ * - if there is logic that is common between SOCKS versions, consider creating a base struct or trait to encapsulate shared functionality.
+  - Implement error handling for unsupported authentication methods and connection failures.
+  - Expand the implementation to handle the full SOCKS5 protocol, including command processing and data forwarding.
+ */
 
 
 /**
@@ -29,6 +38,7 @@ impl Socks5 {
         }
     }
 
+
     /**
      * Run the SOCKS5 authentication process.
      */
@@ -36,6 +46,20 @@ impl Socks5 {
         let authentication_method = self.validate_authentication().await?;
         println!("Selected authentication method: {:?}", authentication_method);
 
+        //working on it a.t.m
+        match authentication_method {
+            Authentication::NoAuthentication => {
+                println!("No authentication required, proceeding...");
+            },
+            Authentication::UsernamePassword => {
+                self.connection.write(vec![General::Socks5.as_u8(), authentication_method.as_u8()]).await?;
+                let security_response = self.connection.read(262).await?;
+                println!("Received username/password authentication data: {:?}", String::from_utf8(security_response[1..].to_vec()) );
+            },
+            _ => {
+                return Err("Unsupported authentication method".into());
+            }
+        }
 
         Ok(())
     }
@@ -58,6 +82,5 @@ impl Socks5 {
         self.connection.write(vec![no_acceptable_methods]).await?;
         return Err("No acceptable authentication method found".into());
     }
-
 
 }
