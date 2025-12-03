@@ -3,23 +3,26 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt };
 use tokio::net::TcpStream;
 use crate::proxy::socks5::statics::{General, Command, Authentication, AddressType};
 use crate::proxy::{Connection, Config};
+use std::collections::BTreeMap;
 
+use crate::proxy::socks5::modules::Modules;
 
 /**
  * Socks5 struct representing a SOCKS5 connection.
  */
 pub struct Socks5 {
     connection: Connection,
-    first_buffer: Vec<u8>,
+    first_buffer: Vec<u8>
 }
 
 
 /**
  * TODO: 
- * - if there is logic that is common between SOCKS versions, consider creating a base struct or trait to encapsulate shared functionality.
+ *- if there is logic that is common between SOCKS versions, consider creating a base struct or trait to encapsulate shared functionality.
   - Implement error handling for unsupported authentication methods and connection failures.
   - Expand the implementation to handle the full SOCKS5 protocol, including command processing and data forwarding.
   - refactoring
+  - error handling
  */
 
 
@@ -51,6 +54,7 @@ impl Socks5 {
         //working on it a.t.m
         match authentication_method {
             Authentication::NoAuthentication => self.no_authentication(authentication_method.as_u8()).await?,
+            Authentication::UsernamePassword => self.authentication(authentication_method.as_u8()).await?,
             _ => {
                 return Err("Unsupported authentication method".into());
             }
@@ -66,11 +70,13 @@ impl Socks5 {
     async fn validate_authentication(&mut self) -> Result<Authentication, Box<dyn Error + Send + Sync>> {
 
         let no_acceptable_methods: u8 = Authentication::NoAcceptableMethods.as_u8();
-        let allowed_methods = Config::get_allowed_authentication_method();
+        let allowed_methods: BTreeMap<u8, u8> = Config::get_allowed_authentication_method();
 
-        for &method in &self.first_buffer[2..] {
-            if allowed_methods.contains(&method) {
-                return Ok(Authentication::from_u8(method));
+        for &method in self.first_buffer[2..].iter().rev() {
+            for &allowed_method in allowed_methods.values() {
+                if method == allowed_method {
+                    return Ok(Authentication::from_u8(method));
+                }
             }
         }
 
@@ -80,7 +86,7 @@ impl Socks5 {
 
 
     /**
-     * 
+     * method for no authentication
      */
     async fn no_authentication(&mut self, authentication_method: u8) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.connection.write(vec![General::Socks5.as_u8(), authentication_method]).await?;
@@ -92,21 +98,69 @@ impl Socks5 {
 
 
     /**
-     * 
+     * authenticate using username and password
      */
-    async fn handle_request(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let upstream = self.handle_command().await?;
+    async fn authentication(&mut self, authentication_method: u8) -> Result<(), Box<dyn Error + Send + Sync>> {
+        self.connection.write(vec![General::Socks5.as_u8(), authentication_method]).await?;
 
-        self.tunnel(upstream).await?;
+        let buffer = self.connection.read(513).await?;
+
+        if buffer.len() == 0 || buffer[0] != 0x01 {
+            self.connection.write(vec![0x01, 0x01]).await?;
+            return Err("Invalid username/password authentication version".into());
+        }
+
+        let username_length = buffer[1] as usize;
+        let username = buffer[2..2 + username_length].to_vec();
+        let password_length = buffer[2 + username_length] as usize;
+        let password = buffer[3 + username_length..3 + username_length + password_length].to_vec();
+
+        if !self.check_credentials(username, password) {
+            self.connection.write(vec![0x01, 0x01]).await?;
+            return Err("Invalid username or password".into());
+        }
+
+        println!("User authenticated successfully");
+
+        self.connection.write(vec![0x01, 0x00]).await?;
+
+        self.handle_request().await?;
 
         Ok(())
     }
 
 
     /**
-     * 
+     * check the provided username and password
      */
-    async fn handle_command(&mut self) -> Result<Connection, Box<dyn Error + Send + Sync>> {
+    fn check_credentials(&mut self, username: Vec<u8>, password: Vec<u8>) -> bool {
+        println!("Username and Password received for authentication");
+
+        // Here you would normally check the credentials against a database or predefined values
+        if username == b"username" && password == b"password" {
+            return true;
+        }
+        
+        false
+    }
+
+
+    /**
+     * handle the SOCKS5 request after authentication
+     */
+    async fn handle_request(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let (upstream, host, port) = self.handle_command().await?;
+
+        self.tunnel(upstream, host, port).await?;
+
+        Ok(())
+    }
+
+
+    /**
+     * handle the SOCKS5 command from the client
+     */
+    async fn handle_command(&mut self) -> Result<(Connection, String, u16), Box<dyn Error + Send + Sync>> {
         let request = self.connection.read(258).await?;
         if request.len() < 4 {
             return Err("Invalid SOCKS5 request".into());
@@ -128,26 +182,28 @@ impl Socks5 {
             AddressType::IPv6 => { return Err("IPv6 not supported yet".into()); },
             _ => { return Err("Invalid address type".into()); },    
         };
+
+        println!("Connecting to {}:{}", host, port);
     
         let upstream = Connection::new( TcpStream::connect(format!("{}:{}", host, port)).await? );
 
         self.connection.write(vec![General::Socks5.as_u8(), 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;    
 
-        Ok(upstream)
+        Ok((upstream, host, port))
     }
 
     
     /**
-     * 
+     * create a tunnel between client and upstream server
      */
-    async fn tunnel(&mut self, mut upstream: Connection) -> Result<(),  Box<dyn Error + Send + Sync>> {
+    async fn tunnel(&mut self, mut upstream: Connection, host: String, port: u16) -> Result<(),  Box<dyn Error + Send + Sync>> {
 
         let (client_read, client_write) = self.connection.stream.split();
         let (upstream_read, upstream_write) = upstream.stream.split();
 
         tokio::try_join!(
-            Self::forward(client_read, upstream_write), 
-            Self::forward(upstream_read, client_write)
+            Self::forward(client_read, upstream_write, &host, &port), 
+            Self::forward(upstream_read, client_write, &host, &port)
         )?;
 
         Ok(())
@@ -155,7 +211,7 @@ impl Socks5 {
 
 
     /**
-     * 
+     * fetch ipv4 and port from request 
      */
     async fn fetch_host_and_port_ipv4(&mut self, request: Vec<u8>) -> Result<(String, u16), Box<dyn Error + Send + Sync>> {
         if request.len() != 10 {
@@ -171,12 +227,24 @@ impl Socks5 {
 
 
     /**
-     * 
+     * fetch domain and port from request
      */
     async fn fetch_host_and_port_domain(&mut self, request: Vec<u8>) -> Result<(String, u16), Box<dyn Error + Send + Sync>> {
+
+        println!("Domain request: {:?}", request);
         let domain_length = request[4] as usize;
-        let end_domain = 4 + domain_length;
-        let domain_bytes = request[4..end_domain].to_vec();
+
+        println!("Domain length: {}", domain_length);
+
+        let end_domain = 5 + domain_length;
+
+        println!("End Domain: {}", end_domain);
+
+        let domain_bytes = request[5..end_domain].to_vec();
+
+        println!("Domain bytes: {:?}", domain_bytes);
+
+
         let port_bytes = &request[end_domain..];
         let domain = String::from_utf8(domain_bytes).map_err(|_| "Invalid domain name")?;
         let port = u16::from_be_bytes([port_bytes[0], port_bytes[1]]);
@@ -186,11 +254,13 @@ impl Socks5 {
 
 
     /**
-     * 
+     * forward data between incoming and outgoing streams
      */
     async fn forward<R, W>(
         mut incoming: R,
         mut outgoing: W,
+        host: &str,
+        port: &u16
     ) -> Result<(), Box<dyn Error + Send + Sync>> 
     where 
         R: AsyncRead + Unpin,
@@ -205,7 +275,7 @@ impl Socks5 {
 
             let data = &buffer[..n];
 
-            Self::inspect(data).await?;
+            Self::implement_modules(data, host, port).await?;
             outgoing.write_all(data).await?;
         }
 
@@ -214,10 +284,12 @@ impl Socks5 {
 
 
     /**
-     * 
+     * Hook for implementing modules
      */
-    async fn inspect(_buffer: &[u8]) -> Result<(), Box<dyn Error + Send + Sync>> {
-        println!("Hook for adding modules ...");
+    async fn implement_modules(buffer: &[u8], host: &str, port: &u16) -> Result<(), Box<dyn Error + Send + Sync>> {
+
+        let modules = Modules::new(&buffer, host.to_string(), *port);
+        modules.run()?;
 
         Ok(())
     }
